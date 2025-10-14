@@ -1,0 +1,116 @@
+#define PIN_TRIG 12
+#define PIN_ECHO 13
+
+#define INTERVAL_MS    25
+#define PULSE_USEC     10
+
+#define SND_VEL        346.0     
+#define SCALE          (0.001 * 0.5 * SND_VEL) 
+
+#define _DIST_MIN      100.0     
+#define _DIST_MAX      300.0     
+
+#define _EMA_ALPHA     0.3       
+
+#ifndef MEDIAN_WINDOW
+#define MEDIAN_WINDOW  10
+#endif
+
+unsigned long last_ms = 0;
+float dist_raw = 0.0f;    
+float dist_ema = 0.0f;     
+float dist_median = 0.0f;   
+
+static float ring[MEDIAN_WINDOW];
+static int   ring_count = 0;           
+static int   ring_head  = 0;           
+
+unsigned long readEchoDurationUS(long timeout_us) {
+  return pulseIn(PIN_ECHO, HIGH, timeout_us);
+}
+
+int windowCount() {
+  return (ring_count < MEDIAN_WINDOW) ? ring_count : MEDIAN_WINDOW;
+}
+
+float computeMedian() {
+  int n = windowCount();
+  if (n == 0) return 0.0f;
+
+  float tmp[n];
+  int idx = 0;
+  int start = (ring_head - n + MEDIAN_WINDOW) % MEDIAN_WINDOW;
+  for (int i = 0; i < n; i++) {
+    int pos = (start + i) % MEDIAN_WINDOW;
+    tmp[idx++] = ring[pos];
+  }
+
+  for (int i = 1; i < n; i++) {
+    float key = tmp[i];
+    int j = i - 1;
+    while (j >= 0 && tmp[j] > key) {
+      tmp[j + 1] = tmp[j];
+      j--;
+    }
+    tmp[j + 1] = key;
+  }
+
+  if (n % 2 == 1) {
+    return tmp[n / 2];
+  } else {
+    int mid = n / 2;
+    return 0.5f * (tmp[mid - 1] + tmp[mid]);
+  }
+}
+
+void pushSample(float sample) {
+  ring[ring_head] = sample;
+  ring_head = (ring_head + 1) % MEDIAN_WINDOW;
+  if (ring_count < MEDIAN_WINDOW) ring_count++;
+}
+
+float measureDistanceMM() {
+  digitalWrite(PIN_TRIG, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(PIN_TRIG, HIGH);
+  delayMicroseconds(PULSE_USEC);
+  digitalWrite(PIN_TRIG, LOW);
+
+  unsigned long timeout_us = (INTERVAL_MS / 2) * 1000UL;
+  unsigned long dur = readEchoDurationUS(timeout_us);
+
+  return (float)dur * SCALE;
+}
+
+void setup() {
+  pinMode(PIN_TRIG, OUTPUT);
+  pinMode(PIN_ECHO, INPUT);
+  Serial.begin(115200);
+  while (!Serial) { ; }
+  last_ms = millis();
+  dist_ema = 0.0f;
+  Serial.println("Min,raw,ema,median,Max (labels only; data starts next line)");
+}
+
+void loop() {
+  unsigned long now = millis();
+  if (now - last_ms < INTERVAL_MS) return;
+  last_ms = now;
+
+  dist_raw = measureDistanceMM();
+
+  pushSample(dist_raw);
+
+  dist_median = computeMedian();
+
+  dist_ema = (_EMA_ALPHA * dist_raw) + ((1.0f - _EMA_ALPHA) * dist_ema);
+
+
+  Serial.print("Min:");     Serial.print(_DIST_MIN);
+  Serial.print(",raw:");    Serial.print(dist_raw);
+  Serial.print(",ema:");    Serial.print(dist_ema);
+  Serial.print(",median:"); Serial.print(dist_median);
+  Serial.print(",Max:");    Serial.print(_DIST_MAX);
+  Serial.println("");
+}
