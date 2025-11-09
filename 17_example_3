@@ -58,7 +58,14 @@ void loop()
 
   dist_ema = EMA_ALPHA * dist_prev + (1.0f - EMA_ALPHA) * dist_ema;// Put EMA filter code here
       
-  duty = map(dist_ema, _DIST_MIN, _DIST_MAX, _DUTY_MIN, _DUTY_MAX);
+  {
+  float denom = (_DIST_MAX - _DIST_MIN);
+  float ratio = (denom != 0.0f) ? (dist_ema - _DIST_MIN) / denom : 0.0f;
+  if (ratio < 0.0f) ratio = 0.0f;
+  if (ratio > 1.0f) ratio = 1.0f;
+  float duty_f = _DUTY_MIN + ratio * (_DUTY_MAX - _DUTY_MIN);
+  duty = (int)(duty_f + 0.5f);
+  }
   // Put map() equivalent code here
   
   myservo.writeMicroseconds(duty);
